@@ -1,0 +1,98 @@
+From dbb0164073388934712c5cf83dfda66371cb8ba2 Mon Sep 17 00:00:00 2001
+From: arcnmx <arcnmx@users.noreply.github.com>
+Date: Sat, 28 Sep 2019 06:26:37 -0700
+Subject: [PATCH] Allow async-await macros to be used without std
+
+`select!()` is the only macro that requires std due to implementation
+details, so allow everything else through.
+---
+ futures-util/src/async_await/mod.rs        | 2 ++
+ futures-util/src/async_await/select_mod.rs | 1 +
+ futures-util/src/lib.rs                    | 2 --
+ futures/src/lib.rs                         | 6 ++----
+ 4 files changed, 5 insertions(+), 6 deletions(-)
+
+diff --git a/futures-util/src/async_await/mod.rs b/futures-util/src/async_await/mod.rs
+index 2831fd62a..69cae13be 100644
+--- a/futures-util/src/async_await/mod.rs
++++ b/futures-util/src/async_await/mod.rs
+@@ -31,8 +31,10 @@ mod select_mod;
+ #[cfg(feature = "async-await-macro")]
+ pub use self::select_mod::*;
+ 
++#[cfg(feature = "std")]
+ #[cfg(feature = "async-await-macro")]
+ mod random;
++#[cfg(feature = "std")]
+ #[cfg(feature = "async-await-macro")]
+ pub use self::random::*;
+ 
+diff --git a/futures-util/src/async_await/select_mod.rs b/futures-util/src/async_await/select_mod.rs
+index cdbffba80..628c68379 100644
+--- a/futures-util/src/async_await/select_mod.rs
++++ b/futures-util/src/async_await/select_mod.rs
+@@ -306,6 +306,7 @@ macro_rules! document_select_macro {
+ }
+ 
+ document_select_macro! {
++    #[cfg(feature = "std")]
+     #[proc_macro_hack(support_nested)]
+     pub use futures_macro::select;
+ 
+diff --git a/futures-util/src/lib.rs b/futures-util/src/lib.rs
+index 31d7e3c91..08707a769 100644
+--- a/futures-util/src/lib.rs
++++ b/futures-util/src/lib.rs
+@@ -34,12 +34,10 @@ pub use futures_core::ready;
+ pub use pin_utils::pin_mut;
+ 
+ // Not public API.
+-#[cfg(feature = "std")]
+ #[cfg(feature = "async-await")]
+ #[macro_use]
+ #[doc(hidden)]
+ pub mod async_await;
+-#[cfg(feature = "std")]
+ #[cfg(feature = "async-await")]
+ #[doc(hidden)]
+ pub use self::async_await::*;
+diff --git a/futures/src/lib.rs b/futures/src/lib.rs
+index 84e2a3f9e..5a633690e 100644
+--- a/futures/src/lib.rs
++++ b/futures/src/lib.rs
+@@ -542,23 +542,21 @@ pub mod never {
+ pub use futures_core::core_reexport;
+ 
+ // Not public API.
+-#[cfg(feature = "std")]
+ #[cfg(feature = "async-await")]
+ #[doc(hidden)]
+ pub use futures_util::async_await;
+ 
+ // Not public API.
+-#[cfg(feature = "std")]
+ #[cfg(feature = "async-await")]
+ #[doc(hidden)]
+ pub mod inner_macro {
+     pub use futures_util::join;
+     pub use futures_util::try_join;
++    #[cfg(feature = "std")]
+     pub use futures_util::select;
+     pub use futures_util::select_biased;
+ }
+ 
+-#[cfg(feature = "std")]
+ #[cfg(feature = "async-await")]
+ futures_util::document_join_macro! {
+     #[macro_export]
+@@ -582,9 +580,9 @@ futures_util::document_join_macro! {
+     }
+ }
+ 
+-#[cfg(feature = "std")]
+ #[cfg(feature = "async-await")]
+ futures_util::document_select_macro! {
++    #[cfg(feature = "std")]
+     #[macro_export]
+     macro_rules! select { // replace `::futures_util` with `::futures` as the crate path
+         ($($tokens:tt)*) => {

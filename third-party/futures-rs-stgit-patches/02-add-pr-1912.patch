@@ -1,0 +1,183 @@
+Add PR 1912
+
+From: Rajiv Ranganath <rajiv.ranganath@atihita.com>
+
+Signed-off-by: Rajiv Ranganath <rajiv.ranganath@atihita.com>
+---
+ futures-util/src/async_await/mod.rs        |    2 -
+ futures-util/src/async_await/random.rs     |   92 +++++++++++++++++++++++-----
+ futures-util/src/async_await/select_mod.rs |    1 
+ futures/src/lib.rs                         |    2 -
+ 4 files changed, 74 insertions(+), 23 deletions(-)
+
+diff --git a/futures-util/src/async_await/mod.rs b/futures-util/src/async_await/mod.rs
+index 69cae13b..2831fd62 100644
+--- a/futures-util/src/async_await/mod.rs
++++ b/futures-util/src/async_await/mod.rs
+@@ -31,10 +31,8 @@ mod select_mod;
+ #[cfg(feature = "async-await-macro")]
+ pub use self::select_mod::*;
+ 
+-#[cfg(feature = "std")]
+ #[cfg(feature = "async-await-macro")]
+ mod random;
+-#[cfg(feature = "std")]
+ #[cfg(feature = "async-await-macro")]
+ pub use self::random::*;
+ 
+diff --git a/futures-util/src/async_await/random.rs b/futures-util/src/async_await/random.rs
+index 4f8c7254..0b3b151c 100644
+--- a/futures-util/src/async_await/random.rs
++++ b/futures-util/src/async_await/random.rs
+@@ -1,9 +1,9 @@
++use core::sync::atomic::{AtomicUsize, Ordering};
++#[cfg(feature = "std")]
+ use std::{
+     cell::Cell,
+     collections::hash_map::DefaultHasher,
+     hash::Hasher,
+-    num::Wrapping,
+-    sync::atomic::{AtomicUsize, Ordering},
+ };
+ 
+ // Based on [Fisher–Yates shuffle].
+@@ -18,18 +18,15 @@ pub fn shuffle<T>(slice: &mut [T]) {
+ 
+ /// Return a value from `0..n`.
+ fn gen_index(n: usize) -> usize {
+-    (random() % n as u64) as usize
++    random() % n
+ }
+ 
+-/// Pseudorandom number generator based on [xorshift*].
++/// Pseudorandom number generator based on [xorshift].
+ ///
+-/// [xorshift*]: https://en.wikipedia.org/wiki/Xorshift#xorshift*
+-fn random() -> u64 {
+-    thread_local! {
+-        static RNG: Cell<Wrapping<u64>> = Cell::new(Wrapping(prng_seed()));
+-    }
+-
+-    fn prng_seed() -> u64 {
++/// [xorshift]: https://en.wikipedia.org/wiki/Xorshift
++fn random() -> usize {
++    #[cfg(feature = "std")]
++    fn prng_seed() -> usize {
+         static COUNTER: AtomicUsize = AtomicUsize::new(0);
+ 
+         // Any non-zero seed will do
+@@ -39,16 +36,75 @@ fn random() -> u64 {
+             hasher.write_usize(COUNTER.fetch_add(1, Ordering::Relaxed));
+             seed = hasher.finish();
+         }
+-        seed
++        seed as usize
+     }
+ 
+-    RNG.with(|rng| {
+-        let mut x = rng.get();
+-        debug_assert_ne!(x.0, 0);
++    #[cfg(not(feature = "std"))]
++    const fn prng_seed() -> usize {
++        // A deterministic seed is used in absense of TLS
++        42
++    }
++
++    /// [xorshift*] is used on 64bit platforms.
++    ///
++    /// [xorshift*]: https://en.wikipedia.org/wiki/Xorshift#xorshift*
++    #[cfg(target_pointer_width = "64")]
++    fn xorshift(mut x: usize) -> (usize, usize) {
++        debug_assert_ne!(x, 0);
+         x ^= x >> 12;
+         x ^= x << 25;
+         x ^= x >> 27;
+-        rng.set(x);
+-        x.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+-    })
++        (
++            x,
++            x.wrapping_mul(0x2545_f491_4f6c_dd1d),
++        )
++    }
++
++    /// [xorshift32] is used on 32bit platforms.
++    ///
++    /// [xorshift32]: https://en.wikipedia.org/wiki/Xorshift
++    #[cfg(target_pointer_width = "32")]
++    fn xorshift(mut x: usize) -> (usize, usize) {
++        debug_assert_ne!(x, 0);
++        x ^= x << 13;
++        x ^= x >> 17;
++        x ^= x << 5;
++        (x, x)
++    }
++
++    /// A non-standard xorshift variant is used on 16bit platforms.
++    #[cfg(target_pointer_width = "16")]
++    fn xorshift(mut x: usize) -> (usize, usize) {
++        // Constants chosen from: http://b2d-f9r.blogspot.com/2010/08/16-bit-xorshift-rng.html
++        debug_assert_ne!(x, 0);
++        x ^= x << 4;
++        x ^= x >> 3;
++        x ^= x << 7;
++        (x, x)
++    }
++
++    #[cfg(feature = "std")]
++    fn rng() -> usize {
++        thread_local! {
++            static RNG: Cell<usize> = Cell::new(prng_seed());
++        }
++
++        RNG.with(|rng| {
++            let (x, res) = xorshift(rng.get());
++            rng.set(x);
++            res
++        })
++    }
++
++    #[cfg(not(feature = "std"))]
++    fn rng() -> usize {
++        static RNG: AtomicUsize = AtomicUsize::new(prng_seed());
++
++        // Preemption here can cause multiple threads to observe repeated state
++        let (x, res) = xorshift(RNG.load(Ordering::Relaxed));
++        RNG.store(x, Ordering::Relaxed);
++        res
++    }
++
++    rng()
+ }
+diff --git a/futures-util/src/async_await/select_mod.rs b/futures-util/src/async_await/select_mod.rs
+index 628c6837..cdbffba8 100644
+--- a/futures-util/src/async_await/select_mod.rs
++++ b/futures-util/src/async_await/select_mod.rs
+@@ -306,7 +306,6 @@ macro_rules! document_select_macro {
+ }
+ 
+ document_select_macro! {
+-    #[cfg(feature = "std")]
+     #[proc_macro_hack(support_nested)]
+     pub use futures_macro::select;
+ 
+diff --git a/futures/src/lib.rs b/futures/src/lib.rs
+index 5a633690..a87fba53 100644
+--- a/futures/src/lib.rs
++++ b/futures/src/lib.rs
+@@ -552,7 +552,6 @@ pub use futures_util::async_await;
+ pub mod inner_macro {
+     pub use futures_util::join;
+     pub use futures_util::try_join;
+-    #[cfg(feature = "std")]
+     pub use futures_util::select;
+     pub use futures_util::select_biased;
+ }
+@@ -582,7 +581,6 @@ futures_util::document_join_macro! {
+ 
+ #[cfg(feature = "async-await")]
+ futures_util::document_select_macro! {
+-    #[cfg(feature = "std")]
+     #[macro_export]
+     macro_rules! select { // replace `::futures_util` with `::futures` as the crate path
+         ($($tokens:tt)*) => {

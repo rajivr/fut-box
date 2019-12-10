@@ -1,0 +1,12 @@
+[package]
+name = "fut-box"
+version = "0.1.0"
+authors = ["Rajiv Ranganath <rajiv.ranganath@atihita.com>"]
+edition = "2018"
+
+[dependencies]
+linked_list_allocator = { path = "../third-party/linked-list-allocator" }
+futures-util = { path = "../third-party/futures-rs/futures-util", default-features = false, features = ["async-await-macro"] }
+futures-core = { path = "../third-party/futures-rs/futures-core", default-features = false }
+futures-task = { path = "../third-party/futures-rs/futures-task", default-features = false }
+pin-utils = "0.1.0-alpha.4"
